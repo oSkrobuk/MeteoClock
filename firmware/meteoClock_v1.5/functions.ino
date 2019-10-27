@@ -1,18 +1,11 @@
 void checkBrightness() {
-  if (analogRead(PHOTO) < BRIGHT_THRESHOLD) {   // если темно
-    analogWrite(BACKLIGHT, LCD_BRIGHT_MIN);
-#if (LED_MODE == 0)
-    LED_ON = (LED_BRIGHT_MIN);
-#else
-    LED_ON = (255 - LED_BRIGHT_MIN);
-#endif
-  } else {                                      // если светло
-    analogWrite(BACKLIGHT, LCD_BRIGHT_MAX);
-#if (LED_MODE == 0)
-    LED_ON = (LED_BRIGHT_MAX);
-#else
-    LED_ON = (255 - LED_BRIGHT_MAX);
-#endif
+  int val = analogRead(PHOTO);
+  int currentLightPower = constrain(map(val, 128, 256, 0, 100), LIGHT_BRIGHT_MIN, LIGHT_BRIGHT_MAX);
+  if (abs(currentLightPower - lightPower) > 5) {
+    lightPower = currentLightPower;
+    strip.setBrightness(map(lightPower, LIGHT_BRIGHT_MIN, LIGHT_BRIGHT_MAX, 10, 64));
+    strip.show();
+    setResistance(map(lightPower, LIGHT_BRIGHT_MIN, LIGHT_BRIGHT_MAX, 0, 100));
   }
   if (dispCO2 < 800) setLED(2);
   else if (dispCO2 < 1200) setLED(3);
@@ -237,5 +230,40 @@ void clockTick() {
   if (dispCO2 >= 1200) {
     if (dotFlag) setLED(1);
     else setLED(0);
+  }
+}
+
+// Задаёт сопротивление на "подвижном" выводе.
+// Уровень percent - от 0 до 100% от максимума.
+void setResistance(int percent) { 
+  // Понижаем сопротивление до 0%:
+  digitalWrite(UD, LOW); // выбираем понижение
+  digitalWrite(CS, LOW); // выбираем потенциометр X9C
+  for (int i=0; i<100; i++) { // т.к. потенциометр имеет 100 доступных позиций
+    digitalWrite(INC, LOW);
+    delayMicroseconds(1);
+    digitalWrite(INC, HIGH);
+    delayMicroseconds(1);
+  }
+
+  // Поднимаем сопротивление до нужного:
+  digitalWrite(UD, HIGH);
+  for (int i=0; i<percent; i++) {
+    digitalWrite(INC, LOW);
+    delayMicroseconds(1);
+    digitalWrite(INC, HIGH);
+    delayMicroseconds(1);
+  }
+
+  digitalWrite(CS, HIGH); /* запоминаем значение 
+  и выходим из режима настройки */
+}
+
+// активируем парогенератор, если влажность возжуха меньше HUM_PER_MAX
+void onSteamGenerator() {
+  if (HUM_PER_MAX > dispHum) {  
+    digitalWrite(STEAM_GENERATOR_PIN, HIGH);    
+  } else {
+    digitalWrite(STEAM_GENERATOR_PIN, LOW);  
   }
 }

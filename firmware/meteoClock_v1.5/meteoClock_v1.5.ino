@@ -28,18 +28,14 @@
 
 // ------------------------- НАСТРОЙКИ --------------------
 #define RESET_CLOCK 0       // сброс часов на время загрузки прошивки (для модуля с несъёмной батарейкой). Не забудь поставить 0 и прошить ещё раз!
-#define SENS_TIME 30000     // время обновления показаний сенсоров на экране, миллисекунд
-#define LED_MODE 0          // тип RGB светодиода: 0 - главный катод, 1 - главный анод
+#define SENS_TIME 10000     // время обновления показаний сенсоров на экране, миллисекунд
 
 // управление яркостью
 #define BRIGHT_CONTROL 1      // 0/1 - запретить/разрешить управление яркостью (при отключении яркость всегда будет макс.)
 #define BRIGHT_THRESHOLD 150  // величина сигнала, ниже которой яркость переключится на минимум (0-1023)
-#define LED_BRIGHT_MAX 255    // макс яркость светодиода СО2 (0 - 255)
-#define LED_BRIGHT_MIN 10     // мин яркость светодиода СО2 (0 - 255)
-#define LCD_BRIGHT_MAX 255    // макс яркость подсветки дисплея (0 - 255)
-#define LCD_BRIGHT_MIN 10     // мин яркость подсветки дисплея (0 - 255)
+#define LIGHT_BRIGHT_MAX 255    // макс яркость подсветки дисплея (0 - 255)
+#define LIGHT_BRIGHT_MIN 10     // мин яркость подсветки дисплея (0 - 255)
 
-#define BLUE_YELLOW 1       // жёлтый цвет вместо синего (1 да, 0 нет) но из за особенностей подключения жёлтый не такой яркий
 #define DISP_MODE 1         // в правом верхнем углу отображать: 0 - год, 1 - день недели, 2 - секунды
 #define WEEK_LANG 1         // язык дня недели: 0 - английский, 1 - русский (транслит)
 #define DEBUG 0             // вывод на дисплей лог инициализации датчиков при запуске. Для дисплея 1602 не работает! Но дублируется через порт!
@@ -47,6 +43,7 @@
 #define CO2_SENSOR 1        // включить или выключить поддержку/вывод с датчика СО2 (1 вкл, 0 выкл)
 #define DISPLAY_TYPE 1      // тип дисплея: 1 - 2004 (большой), 0 - 1602 (маленький)
 #define DISPLAY_ADDR 0x27   // адрес платы дисплея: 0x27 или 0x3f. Если дисплей не работает - смени адрес! На самом дисплее адрес не указан
+#define HUM_PER_MAX 50      // максимальный уровень влажности, при котором выключается парогенератор
 
 // пределы отображения для графиков
 #define TEMP_MIN 15
@@ -65,20 +62,19 @@
 // если дисплей не заводится - поменяйте адрес (строка 54)
 
 // пины
-#define BACKLIGHT 10
-#define PHOTO A3
+#define CS 10
+#define INC 9
+#define UD 8
+#define PHOTO A0
+
+// пин мофета для парогенератора
+#define STEAM_GENERATOR_PIN A2
 
 #define MHZ_RX 2
 #define MHZ_TX 3
 
-#define LED_COM 7
-#define LED_R 9
-#define LED_G 6
-#define LED_B 5
+#define LED_COM 13
 #define BTN_PIN 4
-
-#define BL_PIN 10     // пин подсветки дисплея
-#define PHOTO_PIN 0   // пин фоторезистора
 
 // библиотеки
 #include <Wire.h>
@@ -89,6 +85,9 @@ LiquidCrystal_I2C lcd(DISPLAY_ADDR, 20, 4);
 #else
 LiquidCrystal_I2C lcd(DISPLAY_ADDR, 16, 2);
 #endif
+
+#include "Adafruit_NeoPixel.h"
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(1, LED_COM, NEO_GRB + NEO_KHZ800);
 
 #include "RTClib.h"
 RTC_DS3231 rtc;
@@ -130,6 +129,9 @@ byte mode = 0;
   7 график углекислого за час
   8 график углекислого за сутки
 */
+
+// переменные для подсветки
+int lightPower = 255;
 
 // переменные для вывода
 float dispTemp;
@@ -408,54 +410,35 @@ void loadPlot() {
   lcd.createChar(7, row7);
 }
 
-#if (LED_MODE == 0)
-byte LED_ON = (LED_BRIGHT_MAX);
-byte LED_OFF = (LED_BRIGHT_MIN);
-#else
-byte LED_ON = (255 - LED_BRIGHT_MAX);
-byte LED_OFF = (255 - LED_BRIGHT_MIN);
-#endif
-
 void setLED(byte color) {
   // сначала всё выключаем
-  if (!LED_MODE) {
-    analogWrite(LED_R, 0);
-    analogWrite(LED_G, 0);
-    analogWrite(LED_B, 0);
-  } else {
-    analogWrite(LED_R, 255);
-    analogWrite(LED_G, 255);
-    analogWrite(LED_B, 255);
-  }
   switch (color) {    // 0 выкл, 1 красный, 2 зелёный, 3 синий (или жёлтый)
-    case 0:
+    case 0: strip.clear();
       break;
-    case 1: analogWrite(LED_R, LED_ON);
+    case 1: strip.setPixelColor(0, 0xFF0000);
       break;
-    case 2: analogWrite(LED_G, LED_ON);
+    case 2: strip.setPixelColor(0, 0x33FF00);
       break;
-    case 3:
-      if (!BLUE_YELLOW) analogWrite(LED_B, LED_ON);
-      else {
-        analogWrite(LED_R, LED_ON - 50);    // чутка уменьшаем красный
-        analogWrite(LED_G, LED_ON);
-      }
+    case 3: strip.setPixelColor(0, 0xFFAA00);
       break;
   }
+  strip.show();
 }
 
 void setup() {
   Serial.begin(9600);
 
-  pinMode(BACKLIGHT, OUTPUT);
-  pinMode(LED_COM, OUTPUT);
-  pinMode(LED_R, OUTPUT);
-  pinMode(LED_G, OUTPUT);
-  pinMode(LED_B, OUTPUT);
-  setLED(0);
+  pinMode(CS, OUTPUT);
+  pinMode(INC, OUTPUT);
+  pinMode(UD, OUTPUT);
+  digitalWrite(CS, HIGH);  // X9C в режиме низкого потребления
+  digitalWrite(INC, HIGH); 
+  digitalWrite(UD, HIGH);
+  
+  pinMode(STEAM_GENERATOR_PIN, OUTPUT);
 
-  digitalWrite(LED_COM, LED_MODE);
-  analogWrite(BACKLIGHT, LCD_BRIGHT_MAX);
+  strip.begin();
+  strip.setBrightness(255);
 
   lcd.init();
   lcd.backlight();
@@ -571,7 +554,10 @@ void setup() {
 
 void loop() {
   if (brightTimer.isReady()) checkBrightness(); // яркость
-  if (sensorsTimer.isReady()) readSensors();    // читаем показания датчиков с периодом SENS_TIME
+  if (sensorsTimer.isReady()) {
+    readSensors();    // читаем показания датчиков с периодом SENS_TIME
+    onSteamGenerator();
+  }
 
 #if (DISPLAY_TYPE == 1)
   if (clockTimer.isReady()) clockTick();        // два раза в секунду пересчитываем время и мигаем точками
